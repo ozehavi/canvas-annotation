@@ -13,20 +13,39 @@ interface Position {
   y: number;
 }
 
+interface DrawingState {
+  isDrawing: boolean;
+  startPosition: Position | null;
+  currentRectangle: Omit<Rectangle, 'name'> | null;
+}
+
+interface NamePromptState {
+  isOpen: boolean;
+  name: string;
+}
+
 interface CanvasAnnotationsProps {
   floorPlanImage: string;
 }
 
 const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const storageCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const [isDrawing, setIsDrawing] = useState<boolean>(false);
-  const [startPosition, setStartPosition] = useState<Position>({ x: 0, y: 0 });
+  
   const [rectangles, setRectangles] = useState<Rectangle[]>([]);
-  const [showNamePrompt, setShowNamePrompt] = useState<boolean>(false);
-  const [tempRectangle, setTempRectangle] = useState<Omit<Rectangle, 'name'> | null>(null);
-  const [newRectangleName, setNewRectangleName] = useState<string>('');
-  const [isImageLoaded, setIsImageLoaded] = useState<boolean>(false);
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
+  
+  const [drawingState, setDrawingState] = useState<DrawingState>({
+    isDrawing: false,
+    startPosition: null,
+    currentRectangle: null,
+  });
+  
+  const [namePrompt, setNamePrompt] = useState<NamePromptState>({
+    isOpen: false,
+    name: '',
+  });
 
   useEffect(() => {
     const savedRectangles = JSON.parse(localStorage.getItem('rectangles') || '[]') as Rectangle[];
@@ -42,50 +61,46 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
   useEffect(() => {
     if (!isImageLoaded || !imageRef.current) return;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const drawingCanvas = drawingCanvasRef.current;
+    const storageCanvas = storageCanvasRef.current;
+    if (!drawingCanvas || !storageCanvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const width = imageRef.current.width;
+    const height = imageRef.current.height;
+    drawingCanvas.width = width;
+    drawingCanvas.height = height;
+    storageCanvas.width = width;
+    storageCanvas.height = height;
 
-    canvas.width = imageRef.current.width;
-    canvas.height = imageRef.current.height;
-
-    redrawCanvas();
+    updateStorageCanvas();
   }, [isImageLoaded]);
 
   useEffect(() => {
     if (!isImageLoaded) return;
-    redrawCanvas();
-  }, [rectangles, tempRectangle, isImageLoaded]);
+    updateStorageCanvas();
+  }, [rectangles, isImageLoaded]);
 
-  const redrawCanvas = () => {
-    console.log("in redrawCanvas");
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const updateStorageCanvas = () => {
+    const storageCanvas = storageCanvasRef.current;
+    if (!storageCanvas) return;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = storageCanvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, storageCanvas.width, storageCanvas.height);
 
     if (imageRef.current) {
       ctx.drawImage(imageRef.current, 0, 0);
     }
 
     drawRectangles(ctx, rectangles);
-    
-    if (tempRectangle) {
-      ctx.strokeStyle = 'rgba(0, 123, 255, 0.8)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(
-        tempRectangle.x,
-        tempRectangle.y,
-        tempRectangle.width,
-        tempRectangle.height
-      );
-    }
+
+    const drawingCanvas = drawingCanvasRef.current;
+    if (!drawingCanvas) return;
+    const drawingCtx = drawingCanvas.getContext('2d');
+    if (!drawingCtx) return;
+    drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    drawingCtx.drawImage(storageCanvas, 0, 0);
   };
 
   const drawRectangles = (ctx: CanvasRenderingContext2D, rectangles: Rectangle[]): void => {
@@ -99,9 +114,9 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
       ctx.font = '14px Arial';
       const textMetrics = ctx.measureText(rect.name);
       const textWidth = textMetrics.width;
-      const textHeight = 14; 
+      const textHeight = 14;
       const padding = 4;
-      
+
       const textX = rect.x;
       const textY = rect.y - 10;
 
@@ -119,7 +134,7 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
   };
 
   const getMousePosition = (event: React.MouseEvent): Position => {
-    const canvas = canvasRef.current;
+    const canvas = drawingCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
@@ -133,71 +148,101 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
 
   const handleMouseDown = (event: React.MouseEvent): void => {
     event.preventDefault();
+    
+    if (namePrompt.isOpen)
+      handleCancel();
+    
     const pos = getMousePosition(event);
-    setIsDrawing(true);
-    setStartPosition(pos);
+    setDrawingState(prev => ({
+      ...prev,
+      isDrawing: true,
+      startPosition: pos,
+      currentRectangle: null,
+    }));
   };
 
   const handleMouseMove = (event: React.MouseEvent): void => {
-    if (!isDrawing) return;
+    if (!drawingState.isDrawing || !drawingState.startPosition) return;
 
     event.preventDefault();
     const currentPos = getMousePosition(event);
-    const canvas = canvasRef.current;
+    const canvas = drawingCanvasRef.current;
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    redrawCanvas();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const storageCanvas = storageCanvasRef.current;
+    if (storageCanvas) {
+      ctx.drawImage(storageCanvas, 0, 0);
+    }
 
     ctx.strokeStyle = 'rgba(0, 123, 255, 0.8)';
     ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(
-      startPosition.x,
-      startPosition.y,
-      currentPos.x - startPosition.x,
-      currentPos.y - startPosition.y
+      drawingState.startPosition.x,
+      drawingState.startPosition.y,
+      currentPos.x - drawingState.startPosition.x,
+      currentPos.y - drawingState.startPosition.y
     );
   };
 
   const handleMouseUp = (event: React.MouseEvent): void => {
-    if (!isDrawing) return;
+    if (!drawingState.isDrawing || !drawingState.startPosition) return;
 
-    setIsDrawing(false);
     const endPosition = getMousePosition(event);
     const newRect = {
-      x: Math.min(startPosition.x, endPosition.x),
-      y: Math.min(startPosition.y, endPosition.y),
-      width: Math.abs(endPosition.x - startPosition.x),
-      height: Math.abs(endPosition.y - startPosition.y),
+      x: Math.min(drawingState.startPosition.x, endPosition.x),
+      y: Math.min(drawingState.startPosition.y, endPosition.y),
+      width: Math.abs(endPosition.x - drawingState.startPosition.x),
+      height: Math.abs(endPosition.y - drawingState.startPosition.y),
     };
-    setTempRectangle(newRect);
-    setShowNamePrompt(true);
+
+    setDrawingState(prev => ({
+      ...prev,
+      isDrawing: false,
+      currentRectangle: newRect,
+    }));
+    setNamePrompt({
+      isOpen: true,
+      name: '',
+    });
   };
 
   const handleNameSubmit = (): void => {
-    if (tempRectangle && newRectangleName.trim()) {
+    if (drawingState.currentRectangle && namePrompt.name.trim()) {
       const newRectangle: Rectangle = {
-        ...tempRectangle,
-        name: newRectangleName.trim(),
+        ...drawingState.currentRectangle,
+        name: namePrompt.name.trim(),
       };
       const updatedRectangles = [...rectangles, newRectangle];
       setRectangles(updatedRectangles);
       localStorage.setItem('rectangles', JSON.stringify(updatedRectangles));
-      
-      setTempRectangle(null);
-      setNewRectangleName('');
-      setShowNamePrompt(false);
+
+      setDrawingState(prev => ({
+        ...prev,
+        currentRectangle: null,
+      }));
+      setNamePrompt({
+        isOpen: false,
+        name: '',
+      });
     }
   };
 
   const handleCancel = (): void => {
-    setShowNamePrompt(false);
-    setTempRectangle(null);
-    setNewRectangleName('');
-    redrawCanvas();
+    setDrawingState(prev => ({
+      ...prev,
+      isDrawing: false,
+      currentRectangle: null,
+    }));
+    setNamePrompt({
+      isOpen: false,
+      name: '',
+    });
+    updateStorageCanvas();
   };
 
   const handleRename = (index: number, newName: string): void => {
@@ -222,22 +267,39 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
     }
   };
 
+  const handleOutsideClick = (event: React.MouseEvent): void => {
+    if (event.target === event.currentTarget) {
+      handleCancel();
+    }
+  };
+
   return (
     <div className="flex items-start gap-6 p-4">
-      <div className="relative flex-shrink-0">
+      <div 
+        className="relative flex-shrink-0"
+        onClick={handleOutsideClick}
+      >
         <canvas
-          ref={canvasRef}
+          ref={storageCanvasRef}
+          className="absolute border border-gray-300"
+          style={{ pointerEvents: 'none' }}
+        />
+        <canvas
+          ref={drawingCanvasRef}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          className="border border-gray-300 cursor-crosshair"
+          className="relative border border-gray-300 cursor-crosshair"
         />
-        {showNamePrompt && (
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded shadow-lg border border-gray-300 w-64">
+        {namePrompt.isOpen && (
+          <div 
+            className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded shadow-lg border border-gray-300 w-64"
+            onClick={e => e.stopPropagation()}
+          >
             <input
               type="text"
-              value={newRectangleName}
-              onChange={(e) => setNewRectangleName(e.target.value)}
+              value={namePrompt.name}
+              onChange={(e) => setNamePrompt(prev => ({ ...prev, name: e.target.value }))}
               onKeyDown={handleKeyDown}
               placeholder="Enter rectangle name"
               className="border border-gray-300 p-2 mb-2 w-full rounded"
@@ -253,7 +315,7 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
               <button
                 onClick={handleNameSubmit}
                 className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                disabled={!newRectangleName.trim()}
+                disabled={!namePrompt.name.trim()}
               >
                 Save
               </button>
@@ -266,9 +328,7 @@ const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage })
         <div className="grid gap-4">
           {rectangles.map((rect, index) => (
             <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-              <p className="font-medium mb-2 break-all">
-                {rect.name}
-              </p>
+              <p className="font-medium mb-2 break-all">{rect.name}</p>
               <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
                 <div>
                   <span className="font-medium">Position:</span> ({rect.x.toFixed(1)}, {rect.y.toFixed(1)})
