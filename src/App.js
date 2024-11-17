@@ -1,6 +1,6 @@
 
 import floorPlanImage from './Sample_Floorplan.png';
-import CanvasAnnotations from './CanvasAnnotations';
+import CanvasAnnotations from './components/CanvasAnnotations';
 
 const App = () => {
   
