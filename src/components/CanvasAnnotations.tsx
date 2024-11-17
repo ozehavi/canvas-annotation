@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const CanvasAnnotations: React.FC<CanvasAnnotationsProps> = ({ floorPlanImage }) => {
+const CanvasAnnotations: React.FC<{floorPlanImage: string}> = ({ floorPlanImage }) => {
   const drawingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const storageCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
